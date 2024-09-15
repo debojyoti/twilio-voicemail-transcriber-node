@@ -1,0 +1,13 @@
+[
+    {
+      "publicUrl": "https://your-s3-bucket.s3.us-east-1.amazonaws.com/audio1.wav",
+      "transcript": "This is the transcribed text from the audio.",
+      "timestamp": "2024-04-27T12:34:56.789Z"
+    },
+    {
+      "publicUrl": "https://your-s3-bucket.s3.us-east-1.amazonaws.com/audio2.wav",
+      "transcript": "Another transcribed text from a different audio file.",
+      "timestamp": "2024-04-27T12:35:56.789Z"
+    }
+  ]
+  
