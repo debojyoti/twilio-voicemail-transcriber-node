@@ -1,5 +1,19 @@
 {
+  "name": "twilio-voicemail-transcriber",
+  "version": "1.0.0",
+  "description": "Decrypt Twilio voicemails, upload to S3, transcribe using Amazon Transcribe Streaming API, and log the results.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "Your Name",
+  "license": "MIT",
   "dependencies": {
-    "dotenv": "^16.4.5"
+    "@aws-sdk/client-s3": "^3.303.0",
+    "@aws-sdk/client-transcribe": "^3.303.0",
+    "aws4": "^1.11.0",
+    "dotenv": "^16.4.5",
+    "node-fetch": "^2.7.0",
+    "node-forge": "^1.3.1"
   }
 }

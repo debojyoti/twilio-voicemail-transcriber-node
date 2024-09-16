@@ -17,6 +17,14 @@ async function transcribeStreamAudio(audioFilePath, languageCode = 'en-US', samp
     // Amazon Transcribe streaming endpoint
     const endpoint = `transcribestreaming.${region}.amazonaws.com`;
     
+    // Ensure AWS credentials are set in environment variables
+    const awsAccessKeyId = process.env.AWS_ACCESS_KEY_ID;
+    const awsSecretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+
+    if (!awsAccessKeyId || !awsSecretAccessKey) {
+      return reject(new Error('Missing AWS credentials. Please set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in your environment.'));
+    }
+
     // Sign request using AWS Signature v4
     const requestOptions = aws4.sign({
       host: endpoint,
@@ -31,6 +39,9 @@ async function transcribeStreamAudio(audioFilePath, languageCode = 'en-US', samp
       },
       service: 'transcribestreaming',
       region,
+    }, {
+      accessKeyId: awsAccessKeyId,
+      secretAccessKey: awsSecretAccessKey,
     });
 
     // Establish HTTP/2 connection
