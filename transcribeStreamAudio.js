@@ -1,96 +1,62 @@
-const http2 = require("http2");
-const aws4 = require("aws4");
+const { TranscribeStreamingClient, StartStreamTranscriptionCommand } = require("@aws-sdk/client-transcribe-streaming");
 const fs = require("fs");
+
+// Initialize the AWS TranscribeStreamingClient
+const transcribeClient = new TranscribeStreamingClient({ region: process.env.AWS_REGION || 'us-east-1' });
 
 /**
  * Streams a local .wav file to Amazon Transcribe Streaming service.
  */
-async function transcribeStreamAudio(
-  audioFilePath,
-  languageCode = "en-US",
-  sampleRate = "16000",
-  region = "us-east-1"
-) {
+async function transcribeStreamAudio(audioFilePath, languageCode = "en-US", sampleRate = 16000) {
   return new Promise((resolve, reject) => {
-    const endpoint = `transcribestreaming.${region}.amazonaws.com`;
+    // Create a readable stream from the audio file
+    const audioStream = fs.createReadStream(audioFilePath, { highWaterMark: 32000 });  // Limit chunk size to 32 KB
 
-    // Prepare the request options
-    const requestOptions = {
-      host: endpoint,
-      method: "POST",
-      path: "/stream-transcription",
-      service: "transcribestreaming",
-      headers: {
-        "Content-Type": "application/vnd.amazon.eventstream",
-        "x-amz-target": "com.amazonaws.transcribe.Transcribe.StartStreamTranscription",
-        "x-amz-transcribe-language-code": languageCode,
-        "x-amz-transcribe-sample-rate": sampleRate,
-        "x-amz-content-sha256": "STREAMING-AWS4-HMAC-SHA256-EVENTS",
-        // Remove "Transfer-Encoding"
+    // Set up parameters for the transcription job
+    const params = {
+      LanguageCode: languageCode,
+      MediaSampleRateHertz: sampleRate,
+      MediaEncoding: 'pcm', // Amazon Transcribe expects PCM encoding
+      AudioStream: {
+        async *[Symbol.asyncIterator]() {
+          for await (const chunk of audioStream) {
+            yield { AudioEvent: { AudioChunk: chunk } };
+          }
+        },
       },
-      region: region,
     };
 
-    // Sign the request with AWS credentials
-    aws4.sign(requestOptions);
+    const command = new StartStreamTranscriptionCommand(params);
 
-    // Log the signed request options for debugging
-    console.log("Signed Request Options:", requestOptions);
+    let transcriptBuffer = '';
 
-    // Establish an HTTP/2 connection to Amazon Transcribe Streaming
-    const client = http2.connect(`https://${endpoint}`);
-    console.log("Connected to AWS Transcribe Streaming service.");
+    // Capture transcription results as they come in
+    transcribeClient.send(command)
+      .then(async (response) => {
+        for await (const event of response.TranscriptResultStream) {
+          const results = event.TranscriptEvent.Transcript.Results;
+          if (results.length > 0 && results[0].Alternatives.length > 0) {
+            const transcript = results[0].Alternatives[0].Transcript;
 
-    // Start the transcription request
-    const req = client.request(requestOptions.headers);
-    console.log("Request to Transcribe service initiated.");
+            // Check if the result is final (not partial)
+            if (!results[0].IsPartial) {
+              transcriptBuffer += transcript + ' ';
+              console.log('Final transcript portion:', transcript.trim());
+            } else {
+              console.log('Partial transcript (not final):', transcript.trim());
+            }
+          }
+        }
 
-    // Buffer to accumulate transcription results
-    let transcriptBuffer = "";
+        console.log('Transcription complete.');
+        resolve(transcriptBuffer.trim());
 
-    // Capture the transcription results as they come in
-    req.setEncoding("utf8");
-    req.on("data", (chunk) => {
-      console.log("Received transcription chunk.");
-      transcriptBuffer += chunk;
-    });
-
-    req.on("end", () => {
-      console.log("Transcription complete, request ended.");
-      client.close();
-      resolve(transcriptBuffer); // Return the final transcription result
-    });
-
-    req.on("error", (err) => {
-      console.error("Request error:", err.message);
-      client.close();
-      reject(`Error with transcription request: ${err.message}`);
-    });
-
-    // Stream the audio file chunk by chunk to AWS Transcribe
-    const audioStream = fs.createReadStream(audioFilePath);
-
-    console.log("Audio stream opened.");
-
-    audioStream.on("data", (chunk) => {
-      console.log("Writing audio chunk...");
-      if (!req.closed && !req.destroyed) {
-        req.write(chunk); // Stream each chunk to AWS Transcribe
-      }
-    });
-
-    audioStream.on("end", () => {
-      console.log("Audio stream ended. Ending transcription request.");
-      req.end(); // Close the request after all chunks have been streamed
-    });
-
-    // Handle audio stream errors
-    audioStream.on("error", (err) => {
-      console.error("Audio stream error:", err.message);
-      client.close();
-      reject(`Error reading audio file: ${err.message}`);
-    });
+      }).catch((err) => {
+        console.error('Transcription error:', err);
+        reject(err);
+      });
   });
 }
+
 
 module.exports = transcribeStreamAudio;
