@@ -4,6 +4,7 @@ const fetchEncryptionDetails = require('./twilioApi');
 const decryptAudio = require('./decrypt');
 const transcribeStreamAudio = require('./transcribeStreamAudio'); // Import transcription logic
 const convertAudio = require('./audioConverter'); // Import audio conversion logic
+const { uploadFileToS3, generateFileId } = require('./s3Uploader'); // S3 upload and ID generation
 
 // Read configuration from environment variables
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -28,7 +29,16 @@ const convertedFilePath = path.resolve(process.env.CONVERTED_AUDIO_PATH);
     console.log('Starting audio conversion...');
     await convertAudio(decryptedFilePath, convertedFilePath);
 
-    // Step 4: Transcribe the converted audio file using AWS Transcribe Streaming
+    // Step 4: Upload the converted audio file to S3 and get the file ID
+    console.log('Uploading file to S3...');
+    const fileId = generateFileId(); // Generate a unique file ID
+    await uploadFileToS3(convertedFilePath, fileId);
+
+    // Step 5: Return frontend URL with file ID
+    const frontendUrl = `https://mysawesomefrontendapp.com?id=${fileId}`;
+    console.log('Frontend URL:', frontendUrl);
+
+    // Optional Step: Transcribe the converted audio file using AWS Transcribe Streaming
     console.log('Starting transcription...');
     const transcript = await transcribeStreamAudio(convertedFilePath, 'en-US', 16000, process.env.AWS_REGION);
     
