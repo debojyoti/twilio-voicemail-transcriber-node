@@ -1,250 +1,190 @@
+# Twilio Voicemail Transcriber with AWS Transcribe and S3
 
-# Twilio Encrypted Voicemail Transcriber
-
-This project handles decryption of Twilio encrypted voicemail files, converts them to a suitable format using FFmpeg, and transcribes the audio using AWS Transcribe Streaming Service. Additionally, it uploads the audio file to an S3 bucket and generates a presigned URL via an AWS Lambda function for audio playback in the frontend.
+This project decrypts Twilio voicemail recordings, converts them to a usable audio format, uploads them to AWS S3, transcribes the audio using AWS Transcribe Streaming API, and logs the result. Additionally, it sends an email notification using SendGrid with transcription details and a link to the recorded file.
 
 ## Features
-- **Twilio Voicemail Decryption**: Fetches encryption details from Twilio and decrypts the audio file.
-- **FFmpeg Audio Conversion**: Converts the decrypted audio file to PCM format with 16kHz sampling and mono channel, suitable for AWS Transcribe.
-- **AWS Transcribe Streaming**: Streams the audio file to AWS Transcribe to generate real-time transcription.
-- **S3 Upload**: Uploads the decrypted and converted audio file to an S3 bucket.
-- **Presigned URL Generation**: Provides a presigned URL that allows frontend playback of the audio file. The URL is valid for 30 minutes.
 
----
+- Decrypt Twilio voicemail recordings.
+- Convert audio files to PCM 16kHz mono.
+- Upload converted audio files to AWS S3.
+- Transcribe audio using AWS Transcribe Streaming API.
+- Send an email notification using SendGrid with transcription and recording URL.
+- Cleans up temporary files after processing.
 
-## Table of Contents
-- [Requirements](#requirements)
-- [Project Structure](#project-structure)
-- [Installation](#installation)
-- [Environment Variables](#environment-variables)
-- [How to Run](#how-to-run)
-- [Lambda Function Setup](#lambda-function-setup)
-- [Local Development Setup (Windows)](#local-development-setup-windows)
-- [Local Development Setup (macOS/Linux)](#local-development-setup-macoslinux)
-- [License](#license)
+## Prerequisites
 
----
+To run this project, you need the following:
 
-## Requirements
-- **Node.js** (v14+)
-- **FFmpeg** installed on your system
-- **AWS Credentials** with permission to use S3 and AWS Transcribe
-- **Twilio Account** with access to encrypted voicemail data
-- **npm** (Node Package Manager)
-
----
-
-## Project Structure
-
-```
-.
-├── index.js                     # Main file to run the entire process
-├── audioConverter.js            # Converts audio file to PCM 16kHz mono format using FFmpeg
-├── twilioApi.js                 # Fetches encryption details from Twilio
-├── decrypt.js                   # Handles decryption of the audio file using the provided encryption key
-├── transcribeStreamAudio.js     # Streams the audio file to AWS Transcribe Streaming and retrieves transcription
-├── s3Uploader.js                # Handles file uploads to S3 and generating unique file IDs
-├── .env                         # Environment configuration file
-├── encrypted/                   # Directory where encrypted audio files are stored
-├── decrypted/                   # Directory where decrypted audio files are stored
-├── converted/                   # Directory where converted audio files are stored (after FFmpeg conversion)
-```
-
----
-
-## Installation
-
-1. Clone this repository:
-
-   ```bash
-   git clone https://github.com/your-repository-url/twilio-voicemail-transcriber.git
-   cd twilio-voicemail-transcriber
-   ```
-
-2. Install dependencies:
-
-   ```bash
-   npm install
-   ```
-
-3. Install **FFmpeg** on your system (see detailed instructions below).
-
----
+1. **Node.js** (v14.x or later)
+2. **AWS Account** with permissions to access **S3** and **Transcribe Streaming**.
+3. **Twilio Account** to handle encrypted recordings and get webhook responses.
+4. **SendGrid Account** with a verified sender email for sending email notifications.
 
 ## Environment Variables
 
-Create a `.env` file in the root of the project and add the following environment variables:
+Create a `.env` file in the root directory of the project with the following variables:
 
-```ini
-TWILIO_ACCOUNT_SID=your_twilio_account_sid
-TWILIO_RECORDING_SID=your_twilio_recording_sid
-ENCRYPTED_AUDIO_PATH=./encrypted/your-encrypted-audio-file.wav
-TWILIO_PEM_KEY_PATH=./keys/your-key.pem
-DECRYPTED_AUDIO_PATH=./decrypted/output.wav
-CONVERTED_AUDIO_PATH=./converted/output-16000.wav
-AWS_REGION=us-east-1
-S3_BUCKET_NAME=your-s3-bucket-name
+```env
+# AWS Configuration
 AWS_ACCESS_KEY_ID=your_aws_access_key_id
 AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
-FRONTEND_URL=https://mysawesomefrontendapp.com
+AWS_REGION=your_aws_region
+
+# S3 Configuration
+S3_BUCKET_NAME=your_s3_bucket_name
+
+# Twilio Configuration
+TWILIO_PEM_KEY_PATH=./keys/twilio_key.pem
+ENCRYPTED_AUDIO_PATH=./encrypted/voicemail.wav
+DECRYPTED_AUDIO_PATH=./decrypted/voicemail.wav
+CONVERTED_AUDIO_PATH=./decrypted/output-16000.wav
+TWILIO_ACCOUNT_SID=your_twilio_account_sid
+TWILIO_RECORDING_SID=your_twilio_recording_sid
+TWILIO_AUTH_TOKEN=your_twilio_auth_token
+
+# Transcription Configuration
+TRANSCRIBE_LANGUAGE_CODE=en-US
+TRANSCRIBE_SAMPLE_RATE=16000  # Sample rate in Hz
+
+# Logging Configuration
+LOG_FILE_PATH=./logs.json
+
+# SendGrid Configuration
+SENDGRID_API_KEY=your_sendgrid_api_key
+SENDGRID_FROM_EMAIL=your_verified_sendgrid_sender_email
+SENDGRID_TO_EMAIL=recipient_email_address
+
+# Frontend URL
+FRONTEND_URL=https://your-frontend-url.com
 ```
 
-These variables are:
-- **TWILIO_ACCOUNT_SID**: Your Twilio account SID.
-- **TWILIO_RECORDING_SID**: The recording SID for the voicemail.
-- **ENCRYPTED_AUDIO_PATH**: The path to the encrypted Twilio audio file.
-- **TWILIO_PEM_KEY_PATH**: The path to your private PEM key.
-- **DECRYPTED_AUDIO_PATH**: The path where the decrypted audio will be saved.
-- **CONVERTED_AUDIO_PATH**: The path where the converted audio will be saved after FFmpeg processing.
-- **AWS_REGION**: The AWS region for your services.
-- **S3_BUCKET_NAME**: Your S3 bucket name for storing audio files.
-- **AWS_ACCESS_KEY_ID** and **AWS_SECRET_ACCESS_KEY**: AWS credentials.
-- **FRONTEND_URL**: The frontend URL where the file ID will be passed as a query parameter.
-
----
-
-## How to Run
-
-Once the environment variables and FFmpeg setup are complete, you can run the project using:
+## Folder Structure
 
 ```bash
-node index.js
+.
+├── audioProcessor.js        # Handles decryption, conversion, transcription, and S3 upload
+├── decrypt.js               # Handles decryption of the encrypted audio
+├── audioConverter.js        # Converts audio to PCM 16kHz mono
+├── helpers.js               # Helper functions (get caller number, download audio, cleanup)
+├── s3Uploader.js            # S3 upload and file ID generation logic
+├── transcribeStreamAudio.js # Handles AWS Transcribe Streaming
+├── logger.js                # Logs transcription and upload information
+├── index.js                 # Main Express server and webhook handler
+├── .env                     # Environment variables
+└── temp-files/              # Temporary files folder for storing audio during processing
 ```
 
-This will execute the following steps:
-1. **Fetch encryption details** from Twilio.
-2. **Decrypt the audio file** using the Twilio-provided encryption details.
-3. **Convert the decrypted audio** to PCM 16kHz mono using FFmpeg.
-4. **Upload the audio file** to an S3 bucket.
-5. **Return a frontend URL** containing the file ID (e.g., `https://mysawesomefrontendapp.com?id=<file_id>`).
-6. **Optionally transcribe** the audio file using AWS Transcribe Streaming.
+## Setup Instructions
 
----
+### 1. Install Dependencies
 
-## Lambda Function Setup
+Clone this repository and run the following command to install dependencies:
 
-You will need an AWS Lambda function to generate a presigned URL for audio playback. This URL will allow the frontend to access the audio file for 30 minutes.
-
-### Lambda Function Code:
-
-```javascript
-const { S3Client, GetObjectCommand } = require('@aws-sdk/client-s3');
-const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
-
-// Initialize S3 client
-const s3 = new S3Client({ region: process.env.AWS_REGION });
-
-exports.handler = async (event) => {
-  const bucketName = process.env.S3_BUCKET_NAME;
-  const fileId = event.queryStringParameters.id;  // Get the file ID from the query string
-  const fileKey = `${fileId}.wav`;  // The S3 key of the file
-  
-  // Set the presigned URL expiration (30 minutes)
-  const expirationInSeconds = 30 * 60;
-
-  try {
-    const command = new GetObjectCommand({
-      Bucket: bucketName,
-      Key: fileKey,
-    });
-
-    // Generate the presigned URL
-    const presignedUrl = await getSignedUrl(s3, command, { expiresIn: expirationInSeconds });
-    
-    return {
-      statusCode: 200,
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        presignedUrl: presignedUrl,
-      }),
-    };
-  } catch (error) {
-    console.error('Error generating presigned URL:', error);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({
-        message: 'Error generating presigned URL',
-        error: error.message,
-      }),
-    };
-  }
-};
+```bash
+npm install
 ```
 
-### Environment Variables for Lambda:
+### 2. Configure Environment Variables
 
-Make sure your Lambda function has the following environment variables set:
-- `AWS_REGION`: Your AWS region (e.g., `us-east-1`).
-- `S3_BUCKET_NAME`: The name of the S3 bucket where the files are stored.
+Create a `.env` file in the root directory with the necessary environment variables (see above).
 
----
+### 3. Running the Server
 
-## Local Development Setup (Windows)
+To run the server locally, use the following command:
 
-### Step 1: Install Node.js and npm
-- Download and install Node.js from [https://nodejs.org](https://nodejs.org).
-- Verify installation:
+```bash
+npm start
+```
 
-  ```bash
-  node -v
-  npm -v
-  ```
+This will start the Express server on `http://localhost:3000`.
 
-### Step 2: Install FFmpeg on Windows
-1. **Download FFmpeg**:
-   - Download FFmpeg from [https://ffmpeg.org/download.html](https://ffmpeg.org/download.html).
-   - Extract the FFmpeg files to a location on your machine, such as `C:\ffmpeg`.
+### 4. Exposing the Webhook
 
-2. **Add FFmpeg to your system's PATH**:
-   - Right-click on **This PC** → **Properties** → **Advanced system settings** → **Environment Variables**.
-   - Under **System variables**, find the `Path` variable, click **Edit**, and add the path to the `bin` folder of FFmpeg (e.g., `C:\ffmpeg\bin`).
+Expose the `/twilio-call-status` endpoint for Twilio to call via a webhook using a tool like [ngrok](https://ngrok.com/). For example:
 
-3. **Verify FFmpeg installation**:
-   - Open a new **Command Prompt** and type:
+```bash
+ngrok http 3000
+```
 
-     ```bash
-     ffmpeg -version
-     ```
+Update your Twilio webhook configuration to point to your public `ngrok` URL, like this:
 
-   - You should see version information confirming FFmpeg is installed.
+```
+POST http://your-ngrok-url/twilio-call-status
+```
 
-### Step 3: Configure `.env` File
-- Follow the [Environment Variables](#environment-variables) section to set up your `.env` file.
+## API Endpoints
 
----
+### `POST /twilio-call-status`
 
-## Local Development Setup (macOS/Linux)
+This endpoint is triggered by Twilio when a call is completed, and the recording is ready.
 
-### Step 1: Install Node.js and npm
-- Download and install Node.js from [https://nodejs.org](https://nodejs.org).
+#### Sample Request Body (Webhook Payload)
 
-### Step 2: Install FFmpeg
-- For macOS:
+```json
+{
+  "RecordingSid": "REbb5fba4f6f4cd75b7ca032b1c7541bcb",
+  "RecordingUrl": "https://api.twilio.com/2010-04-01/Accounts/ACXXXXXXXXXXXXXXXXX/Recordings/REbb5fba4f6f4cd75b7ca032b1c7541bcb",
+  "RecordingStatus": "completed",
+  "encryption_details": {
+    "public_key_sid": "CRXXXXXXXXXXXXXXXX",
+    "encrypted_cek": "VnMJNYu8jn1ShJc6mTjXkR8yqyNgE4S3i0YnXBFshfx8OuM2in4cPF+i7rgjt6CyJDPvoYRLNU+oJv7NFcWqRugyShiezp1gPIdDY6B/Hxv+lqdgqAHBXgX0sp3snLAzzWJISip68qfm6r1rl6vVAMG8oSYfk5x+9adqqTFs9yuUd3kC6ewvh33lMNqgeyYANTjnNFR3g9VRggFpyekAZChMbSX/r/pNacK1hcMh/lrmGzqIlrmM0LYTQgwpICZtdQ0hM2CBnxnCm7cvwDKYXz2uodHglmOprMwMzmQOxny8MROlYfP2JDnsqz0VOXOYCgfkdHuNAfH+iOFDN125EQ==",
+    "type": "rsa-aes",
+    "iv": "csPlIO1bSTGzybLp"
+  },
+  "CallSid": "CAxxxxxxxxxxxxxxxx",
+  "AccountSid": "ACXXXXXXXXXXXXXXXXX"
+}
+```
 
-  ```bash
-  brew install ffmpeg
-  ```
+## Process Flow
 
-- For Ubuntu/Linux:
+1. **Caller makes a call**: Once the call ends, Twilio will send a webhook to the `/twilio-call-status` endpoint with the call details and recording URL.
+   
+2. **Download and Process Recording**:
+   - Download the encrypted audio from Twilio.
+   - Decrypt the audio file using the encryption details.
+   - Convert the decrypted audio to PCM 16kHz mono.
+   - Upload the converted audio to AWS S3.
 
-  ```bash
-  sudo apt-get update
-  sudo apt-get install ffmpeg
-  ```
+3. **Transcribe the Audio**:
+   - Use AWS Transcribe Streaming API to get the transcription of the audio.
 
-- Verify FFmpeg installation:
+4. **Send Email Notification**:
+   - Send an email using SendGrid with the following details:
+     - Transcription text.
+     - The link to the audio recording stored in S3.
+     - Predefined reason for the call.
 
-  ```bash
-  ffmpeg -version
-  ```
+5. **Clean Up**:
+   - Delete temporary files after the process is complete.
 
-### Step 3: Configure `.env` File
-- Follow the [Environment Variables](#environment-variables) section to set up your `.env` file.
+## Email Notification Format
 
----
+- **Subject**: `(${new Date().toISOString()}) New Voicemail from: ${FromMobile}`
+- **Content**:
+
+```text
+A new Voicemail has been received:
+Transcription is: ${transcriptionText}
+Recording URL is: ${s3Url}
+Reason for call: ChildCare Services in WA, CA, IL, MA and CT
+```
+
+## Troubleshooting
+
+- Ensure your `.env` file is properly configured, especially for Twilio, AWS, and SendGrid settings.
+- Check for proper permissions in AWS S3 and Transcribe services.
+- Ensure the SendGrid sender email is verified and allowed to send emails.
 
 ## License
 
-This project is licensed under the MIT License. See the LICENSE file for more details.
+This project is licensed under the MIT License.
+```
+
+### Key Updates in README:
+
+- **SendGrid integration**: The email sending logic is explained.
+- **Process flow**: Updated to reflect the steps involved in downloading, processing, transcribing, uploading to S3, and sending email notifications.
+- **Environment setup**: Clear guidance on setting up `.env` file, including all necessary environment variables.
+- **New folder structure**: Updated to match the current project structure.
+- **Troubleshooting section**: Included for common setup issues.

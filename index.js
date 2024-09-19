@@ -17,6 +17,8 @@ const app = express();
 app.use(express.json());
 
 app.post("/twilio-call-status", async (req, res) => {
+  console.log("Received call status update:");
+  console.log(req?.body);
   const { RecordingSid, RecordingUrl, RecordingStatus, EncryptionDetails, CallSid } = req.body;
 
   if (RecordingStatus !== "completed") {
