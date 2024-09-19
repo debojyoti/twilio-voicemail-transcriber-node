@@ -21,6 +21,7 @@ app.use(bodyParser.json());
 app.post("/twilio-call-status", async (req, res) => {
   console.log("Received call status update:");
   console.log(req?.body);
+  console.log(req?.query);
   const { RecordingSid, RecordingUrl, RecordingStatus, EncryptionDetails, CallSid } = req.body;
 
   if (RecordingStatus !== "completed") {
@@ -90,12 +91,27 @@ app.post("/twilio-call-status", async (req, res) => {
     // Step 8: Send email using SendGrid
     console.log("Sending email notification...");
     const frontendUrl = `${process.env.FRONTEND_URL}/?id=${fileId}`;
-    const emailSubject = `${new Date().toISOString()} - New Voicemail from: ${callerNumber}`;
+    const formattedDate = new Date().toLocaleDateString('en-US', {
+      month: '2-digit',
+      day: '2-digit',
+      year: 'numeric'
+    });
+    let emailReasonType = '';
+    let reasonForVisitText = '';
+    if (req?.query?.type) {
+      emailReasonType = req?.query?.type;
+      if (emailReasonType === 'cc') {
+        reasonForVisitText = 'Reason for call: ChildCare Services in WA, CA, IL, MA and CT';
+      } else if (emailReasonType === 'hc') {
+        reasonForVisitText = 'Home Care Services in King County, WA';
+      }
+    }
+    const emailSubject = `${formattedDate} - New Voicemail from: ${callerNumber}`;
     const emailContent = `
       A new Voicemail has been received:\n
       Transcription is: ${transcriptionText}\n
       Recording URL is: ${frontendUrl}\n
-      Reason for call: ChildCare Services in WA, CA, IL, MA and CT
+      ${reasonForVisitText}
     `;
 
     const msg = {
