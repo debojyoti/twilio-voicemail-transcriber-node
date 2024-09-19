@@ -2,14 +2,16 @@ require("dotenv").config(); // Load environment variables
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
-const { getCallerNumber, downloadAudio, cleanupFiles } = require("./helpers"); // Helper functions
+const { getCallerNumber, downloadAudio, cleanupFiles } = require("./helpers");
 const {
   decryptAudio,
   convertAudio,
   transcribeStreamAudio,
   uploadFileToS3, // Now using s3Uploader.js
-  generateFileId, // Now using generateFileId.js
+  generateFileId,
 } = require("./audioProcessor");
+const sgMail = require('@sendgrid/mail'); // Import SendGrid
+sgMail.setApiKey(process.env.SENDGRID_API_KEY); // Set SendGrid API Key
 
 const app = express();
 app.use(express.json());
@@ -60,13 +62,41 @@ app.post("/twilio-call-status", async (req, res) => {
     // Step 5: Upload converted audio to S3
     console.log("Uploading converted audio to S3...");
     const fileId = generateFileId();
-    await uploadFileToS3(convertedFilePath, fileId);
+    const s3Url = await uploadFileToS3(convertedFilePath, fileId);
+    console.log(`File uploaded to S3. URL: ${s3Url}`);
 
-    // Step 6: Clean up temp files
+    // Step 6: Perform transcription of the audio
+    console.log("Starting transcription...");
+    const transcriptionText = await transcribeStreamAudio(convertedFilePath, "en-US", 16000);
+    console.log("Transcription complete:", transcriptionText);
+
+    // Step 7: Clean up temp files
     console.log("Cleaning up temporary files...");
     cleanupFiles([encryptedFilePath, decryptedFilePath, convertedFilePath]);
 
-    res.status(200).send(`File uploaded successfully. File ID: ${fileId}`);
+    // Step 8: Send email using SendGrid
+    console.log("Sending email notification...");
+    const frontendUrl = `${process.env.FRONTEND_URL}/?id=${fileId}`;
+    const emailSubject = `${new Date().toISOString()} - New Voicemail from: ${callerNumber}`;
+    const emailContent = `
+      A new Voicemail has been received:\n
+      Transcription is: ${transcriptionText}\n
+      Recording URL is: ${frontendUrl}\n
+      Reason for call: ChildCare Services in WA, CA, IL, MA and CT
+    `;
+
+    const msg = {
+      to: process.env.SENDGRID_TO_EMAIL, // Recipient email
+      from: process.env.SENDGRID_FROM_EMAIL, // Verified sender email
+      subject: emailSubject,
+      text: emailContent,
+    };
+
+    await sgMail.send(msg);
+    console.log("Email sent successfully.");
+
+    // Send response back to the webhook
+    res.status(200).send(`File uploaded and email sent successfully. File ID: ${fileId}`);
   } catch (error) {
     console.error("Error processing Twilio call status:", error);
     res.status(500).send("An error occurred during processing.");
