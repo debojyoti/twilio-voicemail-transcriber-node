@@ -1,5 +1,8 @@
 # Twilio Voicemail Transcriber with AWS Transcribe and S3
 
+![image](https://github.com/user-attachments/assets/e33f4f8c-3183-4833-a331-2dc72d25d414)
+
+
 This project decrypts Twilio voicemail recordings, converts them to a usable audio format, uploads them to AWS S3, transcribes the audio using AWS Transcribe Streaming API, and logs the result. Additionally, it sends an email notification using SendGrid with transcription details and a link to the recorded file.
 
 ## Features
