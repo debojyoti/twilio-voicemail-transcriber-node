@@ -1,50 +1,86 @@
-require('dotenv').config(); // Load environment variables
-const path = require('path');
-const fetchEncryptionDetails = require('./twilioApi');
-const decryptAudio = require('./decrypt');
-const transcribeStreamAudio = require('./transcribeStreamAudio'); // Import transcription logic
-const convertAudio = require('./audioConverter'); // Import audio conversion logic
-const { uploadFileToS3, generateFileId } = require('./s3Uploader'); // S3 upload and ID generation
+require("dotenv").config(); // Load environment variables
+const express = require("express");
+const bodyParser = require("body-parser");
+const path = require("path");
+const {
+  decryptAudio,
+  convertAudio,
+  transcribeStreamAudio,
+  uploadToS3,
+} = require("./audioProcessor");
+const { getCallerNumber, downloadAudio, cleanupFiles } = require("./helpers"); // Import helper functions
 
-// Read configuration from environment variables
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const recordingSid = process.env.TWILIO_RECORDING_SID;
-const encryptedFilePath = path.resolve(process.env.ENCRYPTED_AUDIO_PATH);
-const pemKeyPath = path.resolve(process.env.TWILIO_PEM_KEY_PATH);
-const decryptedFilePath = path.resolve(process.env.DECRYPTED_AUDIO_PATH);
-const convertedFilePath = path.resolve(process.env.CONVERTED_AUDIO_PATH);
+// Initialize express app
+const app = express();
+app.use(bodyParser.json());
 
-(async () => {
+// Endpoint to receive Twilio webhook
+app.post("/twilio-call-status", async (req, res) => {
   try {
-    // Step 1: Fetch encryption details from Twilio (CEK and IV)
-    console.log('Fetching encryption details...');
-    const { encryptedCek, iv } = await fetchEncryptionDetails(accountSid, recordingSid);
-    
-    // Step 2: Decrypt the audio file using the fetched encryption details
-    console.log('Starting decryption...');
-    await decryptAudio(encryptedFilePath, encryptedCek, iv, pemKeyPath, decryptedFilePath);
-    console.log('Decryption complete. Decrypted file saved at:', decryptedFilePath);
+    const {
+      RecordingStatus,
+      RecordingUrl,
+      EncryptionDetails,
+      RecordingSid,
+      AccountSid,
+      CallSid,
+    } = req.body;
 
-    // Step 3: Convert the decrypted audio file to PCM 16kHz mono using FFmpeg
-    console.log('Starting audio conversion...');
+    if (RecordingStatus !== "completed") {
+      return res.status(200).send("Ignored: Not a completed recording");
+    }
+
+    console.log("Received completed recording:", RecordingSid);
+
+    // Step 1: Get the caller's number using Twilio Call Events API
+    const callerNumber = await getCallerNumber(AccountSid, CallSid);
+    console.log("Caller number:", callerNumber);
+
+    // Step 2: Download the recording file
+    const recordingPath = path.resolve(__dirname, "recording.wav");
+    await downloadAudio(RecordingUrl, recordingPath);
+
+    // Step 3: Decrypt the recording using the CEK and IV from the webhook
+    const decryptedFilePath = path.resolve(__dirname, "decrypted.wav");
+    await decryptAudio(
+      recordingPath,
+      EncryptionDetails.encrypted_cek,
+      EncryptionDetails.iv,
+      process.env.TWILIO_PEM_KEY_PATH,
+      decryptedFilePath
+    );
+    console.log("Decryption complete. File saved to:", decryptedFilePath);
+
+    // Step 4: Convert the decrypted file and upload it to S3
+    const convertedFilePath = path.resolve(__dirname, "converted.wav");
     await convertAudio(decryptedFilePath, convertedFilePath);
+    const publicUrl = await uploadToS3(
+      convertedFilePath,
+      process.env.S3_BUCKET_NAME
+    );
+    console.log("File uploaded to S3:", publicUrl);
 
-    // Step 4: Upload the converted audio file to S3 and get the file ID
-    console.log('Uploading file to S3...');
-    const fileId = generateFileId(); // Generate a unique file ID
-    await uploadFileToS3(convertedFilePath, fileId);
+    // Step 5: Optionally transcribe the converted audio file using AWS Transcribe Streaming
+    const transcript = await transcribeStreamAudio(
+      convertedFilePath,
+      "en-US",
+      16000
+    );
+    console.log("Transcription:", transcript);
 
-    // Step 5: Return frontend URL with file ID
-    const frontendUrl = `https://mysawesomefrontendapp.com?id=${fileId}`;
-    console.log('Frontend URL:', frontendUrl);
+    // Cleanup: Delete the local files after the process is done
+    cleanupFiles([recordingPath, decryptedFilePath, convertedFilePath]);
 
-    // Optional Step: Transcribe the converted audio file using AWS Transcribe Streaming
-    console.log('Starting transcription...');
-    const transcript = await transcribeStreamAudio(convertedFilePath, 'en-US', 16000, process.env.AWS_REGION);
-    
-    console.log('Transcription complete. Transcribed text:');
-    console.log(transcript);  // Print the full transcript
+    // Send a success response back to Twilio
+    res.status(200).send("Processing initiated.");
   } catch (error) {
-    console.error('An error occurred during the process:', error.message || error);
+    console.error("Error processing Twilio call status:", error);
+    res.status(500).send("Error processing recording");
   }
-})();
+});
+
+// Start the server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
