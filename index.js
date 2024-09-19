@@ -27,6 +27,15 @@ app.post("/twilio-call-status", async (req, res) => {
     return res.status(200).send("Recording not completed yet.");
   }
 
+  // Parse EncryptionDetails if it's a string
+  let encryptionDetails;
+  try {
+    encryptionDetails = typeof EncryptionDetails === 'string' ? JSON.parse(EncryptionDetails) : EncryptionDetails;
+  } catch (error) {
+    console.error('Failed to parse EncryptionDetails:', error);
+    return res.status(400).send("Invalid EncryptionDetails format.");
+  }
+
   const recordingSid = RecordingSid;
   const tempFolder = path.resolve(__dirname, "temp-files");
 
@@ -53,8 +62,8 @@ app.post("/twilio-call-status", async (req, res) => {
     console.log("Decrypting audio...");
     await decryptAudio(
       encryptedFilePath,
-      EncryptionDetails.encrypted_cek,
-      EncryptionDetails.iv,
+      encryptionDetails.encrypted_cek,
+      encryptionDetails.iv,
       process.env.TWILIO_PEM_KEY_PATH,
       decryptedFilePath
     );
