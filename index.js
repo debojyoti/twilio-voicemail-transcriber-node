@@ -1,86 +1,78 @@
 require("dotenv").config(); // Load environment variables
 const express = require("express");
-const bodyParser = require("body-parser");
 const path = require("path");
+const fs = require("fs");
+const { getCallerNumber, downloadAudio, cleanupFiles } = require("./helpers"); // Helper functions
 const {
   decryptAudio,
   convertAudio,
   transcribeStreamAudio,
-  uploadFileToS3, // Use s3Uploader.js instead of uploadToS3.js
-  generateFileId
+  uploadFileToS3, // Now using s3Uploader.js
+  generateFileId, // Now using generateFileId.js
 } = require("./audioProcessor");
-const { getCallerNumber, downloadAudio, cleanupFiles } = require("./helpers"); // Import helper functions
 
-// Initialize Express app
 const app = express();
-app.use(bodyParser.json()); // Parse incoming JSON requests
+app.use(express.json());
 
-// POST endpoint to handle the Twilio webhook
 app.post("/twilio-call-status", async (req, res) => {
+  const { RecordingSid, RecordingUrl, RecordingStatus, EncryptionDetails, CallSid } = req.body;
+
+  if (RecordingStatus !== "completed") {
+    return res.status(200).send("Recording not completed yet.");
+  }
+
+  const recordingSid = RecordingSid;
+  const tempFolder = path.resolve(__dirname, "temp-files");
+
+  // Ensure temp directory exists
+  if (!fs.existsSync(tempFolder)) {
+    fs.mkdirSync(tempFolder);
+  }
+
+  // Define unique file paths based on recordingSid
+  const encryptedFilePath = path.join(tempFolder, `${recordingSid}_encrypted.wav`);
+  const decryptedFilePath = path.join(tempFolder, `${recordingSid}_decrypted.wav`);
+  const convertedFilePath = path.join(tempFolder, `${recordingSid}_converted.wav`);
+
   try {
-    const {
-      RecordingStatus,
-      RecordingUrl,
-      EncryptionDetails,
-      RecordingSid,
-      AccountSid,
-      CallSid,
-    } = req.body;
+    // Step 1: Fetch caller number from Twilio API
+    const callerNumber = await getCallerNumber(req.body.AccountSid, CallSid);
+    console.log(`Caller number: ${callerNumber}`);
 
-    if (RecordingStatus !== "completed") {
-      return res.status(200).send("Recording not completed, nothing to process.");
-    }
+    // Step 2: Download the encrypted audio
+    console.log("Downloading encrypted audio...");
+    await downloadAudio(RecordingUrl, recordingSid);
 
-    // Step 1: Get the caller's number
-    console.log("Fetching caller number...");
-    const callerNumber = await getCallerNumber(AccountSid, CallSid);
-    console.log("Caller number:", callerNumber);
-
-    // Step 2: Download the encrypted audio file
-    const encryptedFilePath = path.resolve(process.env.ENCRYPTED_AUDIO_PATH);
-    console.log("Downloading audio file...");
-    await downloadAudio(RecordingUrl, encryptedFilePath);
-    console.log("Audio downloaded successfully.");
-
-    // Step 3: Decrypt the audio file
-    const pemKeyPath = path.resolve(process.env.TWILIO_PEM_KEY_PATH);
-    const decryptedFilePath = path.resolve(process.env.DECRYPTED_AUDIO_PATH);
-    console.log("Starting decryption...");
+    // Step 3: Decrypt the audio
+    console.log("Decrypting audio...");
     await decryptAudio(
       encryptedFilePath,
       EncryptionDetails.encrypted_cek,
       EncryptionDetails.iv,
-      pemKeyPath,
+      process.env.TWILIO_PEM_KEY_PATH,
       decryptedFilePath
     );
-    console.log("Decryption complete. Decrypted file saved at:", decryptedFilePath);
 
-    // Step 4: Convert the decrypted audio file to PCM 16kHz mono using FFmpeg
-    const convertedFilePath = path.resolve(process.env.CONVERTED_AUDIO_PATH);
-    console.log("Starting audio conversion...");
+    // Step 4: Convert the decrypted audio file
+    console.log("Converting decrypted audio...");
     await convertAudio(decryptedFilePath, convertedFilePath);
 
-    // Step 5: Upload the converted audio file to S3 and get the file ID
-    console.log("Uploading file to S3...");
-    const fileId = generateFileId(); // Generate a unique file ID
+    // Step 5: Upload converted audio to S3
+    console.log("Uploading converted audio to S3...");
+    const fileId = generateFileId();
     await uploadFileToS3(convertedFilePath, fileId);
 
-    // Step 6: Return frontend URL with file ID
-    const frontendUrl = `https://mysawesomefrontendapp.com?id=${fileId}`;
-    console.log("Frontend URL:", frontendUrl);
+    // Step 6: Clean up temp files
+    console.log("Cleaning up temporary files...");
+    cleanupFiles([encryptedFilePath, decryptedFilePath, convertedFilePath]);
 
-    // Clean up local files after uploading to S3
-    await cleanupFiles([encryptedFilePath, decryptedFilePath, convertedFilePath]);
-
-    res.status(200).json({ message: "Process completed successfully", frontendUrl });
+    res.status(200).send(`File uploaded successfully. File ID: ${fileId}`);
   } catch (error) {
-    console.error("Error processing Twilio call status:", error.message || error);
-    res.status(500).json({ error: "Failed to process call status" });
+    console.error("Error processing Twilio call status:", error);
+    res.status(500).send("An error occurred during processing.");
   }
 });
 
-// Start Express server
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+app.listen(3000, () => {
+  console.log("Server is running on port 3000");
 });
