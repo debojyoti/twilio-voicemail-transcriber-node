@@ -2,6 +2,7 @@ require("dotenv").config(); // Load environment variables
 const express = require("express");
 const path = require("path");
 const fs = require("fs");
+const bodyParser = require("body-parser"); // Import body-parser
 const { getCallerNumber, downloadAudio, cleanupFiles } = require("./helpers");
 const {
   decryptAudio,
@@ -14,7 +15,8 @@ const sgMail = require('@sendgrid/mail'); // Import SendGrid
 sgMail.setApiKey(process.env.SENDGRID_API_KEY); // Set SendGrid API Key
 
 const app = express();
-app.use(express.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(bodyParser.json());
 
 app.post("/twilio-call-status", async (req, res) => {
   console.log("Received call status update:");
